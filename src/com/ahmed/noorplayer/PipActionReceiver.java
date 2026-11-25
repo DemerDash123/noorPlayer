@@ -5,13 +5,14 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 
-/** Receives the play/pause/skip buttons shown on the floating picture-in-picture window. */
+/** Receives the play/pause/skip/close buttons of the floating window and the background notification. */
 public class PipActionReceiver extends BroadcastReceiver {
     static final String ACTION = "com.ahmed.noorplayer.PIP_ACTION";
     static final String EXTRA_CMD = "cmd";
     static final int CMD_REWIND = 1;
     static final int CMD_TOGGLE = 2;
     static final int CMD_FORWARD = 3;
+    static final int CMD_CLOSE = 4;
 
     static PendingIntent pending(Context c, int cmd) {
         Intent i = new Intent(c, PipActionReceiver.class);
@@ -23,6 +24,9 @@ public class PipActionReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (intent == null) return;
-        PlayerActivity.onPipCommand(intent.getIntExtra(EXTRA_CMD, 0));
+        int cmd = intent.getIntExtra(EXTRA_CMD, 0);
+        boolean handled = PlayerActivity.onPipCommand(cmd);
+        // The player is gone (e.g. the system closed it): make sure no stale notification stays behind.
+        if (!handled) PlaybackService.stop(context);
     }
 }

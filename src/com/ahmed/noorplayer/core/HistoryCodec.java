@@ -114,6 +114,18 @@ public final class HistoryCodec {
         return null;
     }
 
+    /**
+     * The same video opened through a different link (for example from another app each time):
+     * newest entry with the same title and nearly the same length, or null.
+     */
+    public static HistoryEntry findSimilar(List<HistoryEntry> list, String title, long durationMs) {
+        if (title == null || title.trim().isEmpty() || durationMs <= 0) return null;
+        for (HistoryEntry e : list) {
+            if (e.durationMs > 0 && title.equals(e.title) && Math.abs(e.durationMs - durationMs) <= 1500) return e;
+        }
+        return null;
+    }
+
     /** Inserts or replaces the entry for e.uri and re-sorts. */
     public static void upsert(List<HistoryEntry> list, HistoryEntry e) {
         remove(list, e.uri);

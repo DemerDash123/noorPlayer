@@ -66,7 +66,8 @@ public class LogicTest {
 
     @Test
     public void resume() {
-        assertEquals(0, ResumePolicy.resumePosition(3000, 600_000, false));
+        assertEquals(0, ResumePolicy.resumePosition(2000, 600_000, false));
+        assertEquals(4000, ResumePolicy.resumePosition(4000, 600_000, false));
         assertEquals(120_000, ResumePolicy.resumePosition(120_000, 600_000, false));
         assertEquals(0, ResumePolicy.resumePosition(597_000, 600_000, false));
         assertEquals(0, ResumePolicy.resumePosition(120_000, 600_000, true));
@@ -127,6 +128,20 @@ public class LogicTest {
         HistoryCodec.remove(list, "u5");
         assertNull(HistoryCodec.find(list, "u5"));
         HistoryCodec.remove(list, null); // no crash
+    }
+
+    @Test
+    public void similarHistoryMatchesSameVideoFromAnotherLink() {
+        List<HistoryEntry> list = new ArrayList<>();
+        HistoryCodec.upsert(list, entry("content://whatsapp/1", "Holiday", 61_000, 600_000, 10, false, -1));
+        HistoryCodec.upsert(list, entry("content://files/9", "Other", 5_000, 90_000, 20, false, -1));
+        HistoryEntry e = HistoryCodec.findSimilar(list, "Holiday", 600_900);
+        assertNotNull(e);
+        assertEquals(61_000, e.positionMs);
+        assertNull(HistoryCodec.findSimilar(list, "Holiday", 300_000));
+        assertNull(HistoryCodec.findSimilar(list, "holiday", 600_000));
+        assertNull(HistoryCodec.findSimilar(list, "", 600_000));
+        assertNull(HistoryCodec.findSimilar(list, "Holiday", 0));
     }
 
     @Test

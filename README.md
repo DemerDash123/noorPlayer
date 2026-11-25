@@ -2,12 +2,14 @@
 
 A lightweight Android video player (about 240 KB) for Android 7.0 and newer. It uses only the phone's built-in media framework, with no external libraries.
 
-**Download:** [`release/NoorPlayer-1.0.apk`](release/NoorPlayer-1.0.apk)
+**Download:** [`release/NoorPlayer-1.2.apk`](release/NoorPlayer-1.2.apk) (version 1.2)
 
 ## Features
 
 - **Library:** every video on the phone and SD card, with thumbnails, search, sorting (date, name, size, length), a Folders view and a Recent tab.
-- **Resume:** remembers where each video stopped, with a "Continue watching" bar and watched-progress bars.
+- **Resume:** remembers where each video stopped (saved every 5 seconds and whenever you leave), with a "Continue watching" bar and watched-progress bars. It also recognises the same video opened through a different link (for example from WhatsApp or the Files app).
+- **Background playback:** the sound keeps playing when you leave the app or turn off the screen, with a notification (back, play/pause, forward, close) and lock-screen controls.
+- **Volume-key pause:** press Volume Up and Volume Down together to pause or play, on screen, with the screen off, or from another app.
 - **Open from anywhere:** "Open with" and Share from Files, WhatsApp, Telegram and other apps, plus direct links (MP4, MKV, WebM, HLS `.m3u8`).
 - **Gestures:** double-tap the sides to skip; swipe on the left for brightness and on the right for volume; swipe sideways to seek; pinch to zoom.
 - **Playback:** speed from 0.25x to 3x, audio track selection, volume boost, repeat (one or all), auto-play next and a sleep timer.
@@ -18,10 +20,16 @@ A lightweight Android video player (about 240 KB) for Android 7.0 and newer. It 
 
 ## Install
 
-1. Download `release/NoorPlayer-1.0.apk` on your phone and open it.
+1. Download `release/NoorPlayer-1.2.apk` on your phone and open it.
 2. When asked, allow installing apps from that source.
 3. If Play Protect warns that the app is unknown, tap **More details → Install anyway**.
 4. Open Noor Player and allow access to your videos.
+
+## Changes
+
+- **1.2:** pressing both volume keys together now resumes playback too (on screen and in the background), not just pauses.
+- **1.1:** background playback with a notification; pause/play with both volume keys; more reliable resume.
+- **1.0:** first release.
 
 ## Project layout
 
@@ -29,6 +37,7 @@ A lightweight Android video player (about 240 KB) for Android 7.0 and newer. It 
 |------|------------|
 | `src/com/ahmed/noorplayer/` | Android code: library screen, player, thumbnails, settings |
 | `src/com/ahmed/noorplayer/core/` | Plain-Java logic (subtitles, resume, sorting, zoom math, links), unit-tested on the JVM |
+| `src/com/ahmed/noorplayer/PlaybackService.java` | Foreground service and media notification for background playback |
 | `test/` | JUnit 4 tests for the core logic |
 | `res/` | Layouts, icons, theme, and English + Arabic strings |
 | `tools/build.sh` | Builds and signs the APK |

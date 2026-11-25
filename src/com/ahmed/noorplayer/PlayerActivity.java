@@ -27,6 +27,7 @@ import android.media.MediaPlayer;
 import android.media.MediaScannerConnection;
 import android.media.PlaybackParams;
 import android.media.TimedText;
+import android.media.VolumeProvider;
 import android.media.audiofx.LoudnessEnhancer;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
@@ -36,6 +37,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
@@ -74,6 +76,7 @@ import com.ahmed.noorplayer.core.TimeFormat;
 import com.ahmed.noorplayer.core.UrlCheck;
 import com.ahmed.noorplayer.core.VideoFit;
 import com.ahmed.noorplayer.core.VideoItem;
+import com.ahmed.noorplayer.core.VolumeChord;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -169,6 +172,27 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
     private int sleepMinutes;
     private Bitmap pendingShot;
 
+    // background playback and volume-key pause
+    private boolean backgroundMode;
+    private Bitmap notificationArt;
+    private final VolumeChord chord = new VolumeChord();
+    private VolumeProvider volumeProvider;
+    private long lastAutoSave;
+    private int midPlayRecoveries;
+    /**
+     * Paused with the two volume keys while in the background. Android only sends volume keys to an app
+     * whose media session says it is playing, so the session keeps saying "playing" (at speed 0) until
+     * the next key chord, another app taking the sound, returning to the app, or 20 minutes.
+     */
+    private boolean chordPaused;
+    private static final long CHORD_HOLD_MS = 20 * 60_000L;
+    private final Runnable releaseChordHoldRunnable = new Runnable() {
+        @Override
+        public void run() {
+            releaseChordHold();
+        }
+    };
+
     // gestures
     private GestureDetector gestureDetector;
     private ScaleGestureDetector scaleDetector;
@@ -195,6 +219,13 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
         orientationMode = prefs.autoRotate() ? ORIENT_AUTO : ORIENT_SENSOR;
         if (orientationMode == ORIENT_SENSOR) setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_USER);
         if (savedInstanceState != null) playWhenReady = false;
+        if (PlaybackService.ACTION_SHOW_PLAYER.equals(getIntent().getAction())) {
+            // the notification was tapped but the player no longer exists
+            PlaybackService.stop(this);
+            Ui.safeStart(this, new Intent(this, MainActivity.class));
+            finish();
+            return;
+        }
         if (!loadFromIntent(getIntent())) {
             Ui.toast(this, R.string.nothing_to_play);
             finish();
@@ -210,6 +241,11 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        if (PlaybackService.ACTION_SHOW_PLAYER.equals(intent.getAction())) {
+            // back from the notification: keep playing exactly where we are
+            showControls();
+            return;
+        }
         Playlist previous = playlist;
         savePosition(false);
         if (!loadFromIntent(intent)) {
@@ -217,6 +253,16 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
             return;
         }
         setIntent(intent);
+        PlayItem now = playlist.current();
+        if (player != null && prepared && now != null && now.uri.equals(openedUri)) {
+            // the same video is already open (e.g. playing in the background): just continue
+            if (fromStartOnce) seekToInternal(0, true);
+            fromStartOnce = false;
+            updatePrevNext();
+            play();
+            showControls();
+            return;
+        }
         playWhenReady = true;
         startPositionMs = -1;
         if (stopped) releasePlayer();
@@ -239,26 +285,90 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
     protected void onResume() {
         super.onResume();
         launchingInternal = false;
+        exitBackgroundMode();
         hideSystemUi();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        if (!isInPipNow()) savePosition(false);
+        if (!isFinishing() && !launchingInternal && prefs.backgroundPlay() && isPlaying()) {
+            enterBackgroundMode();
+        } else if (!isInPipNow()) {
+            savePosition(false, true);
+        }
     }
 
     @Override
     protected void onStop() {
         super.onStop();
         stopped = true;
-        if (!isInPipNow()) {
+        if (backgroundMode) {
+            savePosition(false, true);
+        } else if (!isInPipNow()) {
             stopPlaybackForBackground();
         }
     }
 
+    /** Leaving the screen while playing: keep the sound going under a foreground service and notification. */
+    private void enterBackgroundMode() {
+        if (backgroundMode) return;
+        backgroundMode = true;
+        savePosition(false, true);
+        notificationArt = captureFrame(320);
+        setSessionActive(true);
+        updateSessionMetadata(playlist.current());
+        useRemoteVolume(true);
+        try {
+            PlaybackService.start(this, notificationState());
+        } catch (RuntimeException e) {
+            // Android refused the service; the sound keeps playing while the app stays alive
+        }
+    }
+
+    private void exitBackgroundMode() {
+        releaseChordHold();
+        if (!backgroundMode) return;
+        backgroundMode = false;
+        PlaybackService.stop(this);
+        useRemoteVolume(false);
+    }
+
+    private PlaybackService.State notificationState() {
+        PlaybackService.State st = new PlaybackService.State();
+        PlayItem item = playlist != null ? playlist.current() : null;
+        st.title = item != null ? item.title : null;
+        st.playing = isPlaying();
+        st.token = session != null ? session.getSessionToken() : null;
+        st.art = notificationArt;
+        return st;
+    }
+
+    private Bitmap captureFrame(int maxWidth) {
+        if (videoW <= 0 || videoH <= 0 || !videoView.isAvailable()) return null;
+        try {
+            float scale = Math.min(1f, maxWidth / (float) Math.max(videoW, videoH));
+            return videoView.getBitmap(Math.max(1, Math.round(videoW * scale)), Math.max(1, Math.round(videoH * scale)));
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** "Close" on the notification (or the app being swiped away while playing in the background). */
+    private void closeFromNotification() {
+        if (player != null && prepared) savePosition(false, true);
+        playWhenReady = false;
+        exitBackgroundMode();
+        releasePlayer();
+        abandonAudioFocus();
+        setSessionActive(false);
+        updatePlayPause();
+        if (stopped || inPip) finish();
+    }
+
     /** Called when the player is no longer visible: remember where we were and free the decoder. */
     private void stopPlaybackForBackground() {
+        exitBackgroundMode();
         unregisterNoisy();
         handler.removeCallbacks(progressRunnable);
         handler.removeCallbacks(sleepRunnable);
@@ -266,7 +376,7 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
         sleepAtEnd = false;
         if (player != null && prepared) {
             startPositionMs = safePosition();
-            savePosition(false);
+            savePosition(false, true);
         }
         playWhenReady = false;
         releasePlayer();
@@ -278,7 +388,8 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
-        if (player != null && prepared) savePosition(false);
+        if (player != null && prepared) savePosition(false, true);
+        exitBackgroundMode();
         releasePlayer();
         abandonAudioFocus();
         unregisterNoisy();
@@ -290,6 +401,13 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
             }
         }
         io.shutdownNow();
+        if (keyWakeLock != null) {
+            try {
+                if (keyWakeLock.isHeld()) keyWakeLock.release();
+            } catch (RuntimeException ignored) {
+                // already released
+            }
+        }
         if (sActive.get() == this) sActive = new WeakReference<>(null);
         super.onDestroy();
     }
@@ -319,7 +437,7 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
             Ui.toast(this, R.string.locked_hint);
             return;
         }
-        savePosition(false);
+        savePosition(false, true);
         finish();
     }
 
@@ -360,13 +478,16 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
         return inPip || Compat.isInPip(this);
     }
 
-    static void onPipCommand(int cmd) {
+    /** Buttons on the floating window and the notification. Returns false if no player is open. */
+    static boolean onPipCommand(int cmd) {
         PlayerActivity a = sActive.get();
-        if (a == null || a.isFinishing()) return;
+        if (a == null || a.isFinishing() || a.isDestroyed()) return false;
         long step = a.prefs.seekStepSec() * 1000L;
         if (cmd == PipActionReceiver.CMD_REWIND) a.seekBy(-step);
         else if (cmd == PipActionReceiver.CMD_TOGGLE) a.togglePlay();
         else if (cmd == PipActionReceiver.CMD_FORWARD) a.seekBy(step);
+        else if (cmd == PipActionReceiver.CMD_CLOSE) a.closeFromNotification();
+        return true;
     }
 
     // ================================================================ intent
@@ -639,6 +760,7 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
             wantedAudioTrack = -1;
             wantedTextTrack = -1;
             serverDiedRetries = 0;
+            midPlayRecoveries = 0;
             zoom = 1f;
             panX = 0;
             panY = 0;
@@ -679,6 +801,11 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
         mp.setOnSeekCompleteListener(listener);
         mp.setOnBufferingUpdateListener(listener);
         mp.setOnTimedTextListener(listener);
+        try {
+            mp.setWakeMode(getApplicationContext(), PowerManager.PARTIAL_WAKE_LOCK);
+        } catch (RuntimeException ignored) {
+            // without it playback still works while the screen is on
+        }
         try {
             mp.setAudioAttributes(new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -724,6 +851,7 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
             startPositionMs = -1;
         } else if (!fromStartOnce && prefs.resume() && item != null) {
             HistoryEntry h = prefs.findHistory(item.uri);
+            if (h == null) h = prefs.findSimilarHistory(item.title, durationMs);
             if (h != null) {
                 start = ResumePolicy.resumePosition(h.positionMs, durationMs, h.finished);
                 if (start > 0) showResumeBanner(start);
@@ -753,6 +881,7 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
             showControls();
         }
         updateProgress();
+        updateSessionMetadata(item);
         updateSessionState();
         updatePipParams();
     }
@@ -797,6 +926,14 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
         if (what == MediaPlayer.MEDIA_ERROR_SERVER_DIED && serverDiedRetries < 1) {
             serverDiedRetries++;
             startPositionMs = lastKnownPosition;
+            openCurrent();
+            return;
+        }
+        // A video that was already playing failed (for example the phone dropped the picture while the
+        // app was in the background): reopen it at the same second instead of stopping.
+        if (prepared && midPlayRecoveries < 2) {
+            midPlayRecoveries++;
+            startPositionMs = safePosition();
             openCurrent();
             return;
         }
@@ -870,6 +1007,8 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
 
     private void play() {
         playWhenReady = true;
+        chordPaused = false;
+        handler.removeCallbacks(releaseChordHoldRunnable);
         if (player == null || !prepared) return;
         requestAudioFocus();
         try {
@@ -889,6 +1028,8 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
 
     private void pausePlayback(boolean byUser) {
         playWhenReady = false;
+        chordPaused = false;
+        handler.removeCallbacks(releaseChordHoldRunnable);
         if (byUser) pausedByFocusLoss = false;
         if (player != null && prepared) {
             try {
@@ -974,10 +1115,16 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
     }
 
     private void savePosition(boolean finished) {
+        savePosition(finished, false);
+    }
+
+    /** sync = write to storage immediately (when leaving), so the position survives the app being killed. */
+    private void savePosition(boolean finished, boolean sync) {
         PlayItem item = playlist != null ? playlist.current() : null;
         if (item == null || player == null || !prepared) return;
         long pos = finished ? durationMs : safePosition();
-        prefs.savePlayback(item.uri, item.title, item.mediaId, pos, durationMs, finished);
+        prefs.savePlayback(item.uri, item.title, item.mediaId, pos, durationMs, finished, sync);
+        lastAutoSave = SystemClock.uptimeMillis();
     }
 
     private void applySpeedIfNeeded() {
@@ -1503,6 +1650,7 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
         menu.getMenu().add(0, 4, 4, R.string.more_screenshot);
         menu.getMenu().add(0, 5, 5, R.string.more_info);
         menu.getMenu().add(0, 6, 6, R.string.more_open_with);
+        menu.getMenu().add(0, 7, 7, prefs.backgroundPlay() ? R.string.more_background_on : R.string.more_background_off);
         menu.setOnMenuItemClickListener(new PopupMenu.OnMenuItemClickListener() {
             @Override
             public boolean onMenuItemClick(MenuItem item) {
@@ -1513,6 +1661,10 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
                     case 4: takeScreenshot(); return true;
                     case 5: showVideoInfo(); return true;
                     case 6: openWithOtherApp(); return true;
+                    case 7:
+                        prefs.setBackgroundPlay(!prefs.backgroundPlay());
+                        Ui.toast(PlayerActivity.this, prefs.backgroundPlay() ? R.string.more_background_on : R.string.more_background_off);
+                        return true;
                     default: return false;
                 }
             }
@@ -1789,6 +1941,7 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
             if (player != null && prepared) {
                 if (controlsVisible || userSeeking) updateProgress();
                 updateExternalSubtitle();
+                if (SystemClock.uptimeMillis() - lastAutoSave > 5000 && isPlaying()) savePosition(false);
             }
             handler.postDelayed(this, externalSubs != null ? 100 : 500);
         }
@@ -2329,6 +2482,13 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         long step = prefs.seekStepSec() * 1000L;
         switch (keyCode) {
+            case KeyEvent.KEYCODE_VOLUME_UP:
+            case KeyEvent.KEYCODE_VOLUME_DOWN:
+                if (prefs.volumeKeysPause() && audio != null) {
+                    onVolumeKeyDown(keyCode == KeyEvent.KEYCODE_VOLUME_UP, event.getRepeatCount() > 0);
+                    return true;
+                }
+                break;
             case KeyEvent.KEYCODE_SPACE:
             case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
             case KeyEvent.KEYCODE_HEADSETHOOK:
@@ -2377,6 +2537,153 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
         return super.onKeyDown(keyCode, event);
     }
 
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if ((keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
+                && prefs.volumeKeysPause() && audio != null) {
+            chord.onKeyUp(keyCode == KeyEvent.KEYCODE_VOLUME_UP);
+            return true;
+        }
+        return super.onKeyUp(keyCode, event);
+    }
+
+    /** On screen: a single volume key works as usual; both keys together pause or play. */
+    private void onVolumeKeyDown(boolean up, boolean repeat) {
+        int action = chord.onKeyDown(up, repeat, SystemClock.uptimeMillis(), (int) currentVolumeIndex());
+        if (action == VolumeChord.ADJUST) {
+            try {
+                audio.adjustStreamVolume(AudioManager.STREAM_MUSIC,
+                        up ? AudioManager.ADJUST_RAISE : AudioManager.ADJUST_LOWER, 0);
+            } catch (RuntimeException ignored) {
+                // e.g. Do Not Disturb restrictions
+            }
+            showVolumeInfo();
+        } else if (action == VolumeChord.TOGGLE) {
+            onVolumeChord();
+        }
+    }
+
+    /** In the background the media session receives the volume steps (screen off or another app open). */
+    private void onSessionVolumeStep(int direction) {
+        int dir = direction > 0 && direction <= 1 ? 1 : (direction < 0 && direction >= -1 ? -1 : 0);
+        if (dir == 0) return;
+        int cur = (int) currentVolumeIndex();
+        int action = chord.onStep(dir, SystemClock.uptimeMillis(), cur);
+        if (action == VolumeChord.ADJUST) {
+            setVolumeIndex(Math.max(0, Math.min(maxVolume(), cur + dir)));
+        } else if (action == VolumeChord.TOGGLE) {
+            onVolumeChord();
+        }
+        if (volumeProvider != null) {
+            try {
+                volumeProvider.setCurrentVolume((int) currentVolumeIndex());
+            } catch (RuntimeException ignored) {
+                // display only
+            }
+        }
+    }
+
+    private void onVolumeChord() {
+        int restore = chord.restoreVolume();
+        if (restore >= 0) setVolumeIndex(restore);
+        boolean wasPlaying = isPlaying();
+        togglePlay();
+        if (wasPlaying && (backgroundMode || stopped || inPip)) {
+            // keep receiving the volume keys so the next chord can resume
+            chordPaused = true;
+            handler.removeCallbacks(releaseChordHoldRunnable);
+            handler.postDelayed(releaseChordHoldRunnable, CHORD_HOLD_MS);
+            updateSessionState();
+        }
+        if (!stopped && !inPip) {
+            boolean playing = playWhenReady;
+            showCenterInfo(playing ? R.drawable.ic_play : R.drawable.ic_pause,
+                    getString(playing ? R.string.state_playing : R.string.state_paused), -1);
+            hideCenterInfoLater(800);
+        }
+    }
+
+    private PowerManager.WakeLock keyWakeLock;
+
+    /** Screen off: keep the processor awake a moment so a volume-key chord is handled right away. */
+    private void briefWakeLock() {
+        try {
+            if (keyWakeLock == null) {
+                PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+                if (pm == null) return;
+                keyWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NoorPlayer:volumeKeys");
+                keyWakeLock.setReferenceCounted(false);
+            }
+            keyWakeLock.acquire(3000);
+        } catch (RuntimeException ignored) {
+            // the chord still works, just possibly a little later
+        }
+    }
+
+    private void releaseChordHold() {
+        handler.removeCallbacks(releaseChordHoldRunnable);
+        if (!chordPaused) return;
+        chordPaused = false;
+        updateSessionState();
+    }
+
+    private void showVolumeInfo() {
+        if (stopped || inPip) return;
+        int max = maxVolume();
+        if (max <= 0) return;
+        int idx = (int) currentVolumeIndex();
+        float f = idx / (float) max;
+        showCenterInfo(idx == 0 ? R.drawable.ic_volume_off : R.drawable.ic_volume,
+                getString(R.string.info_volume, Ui.percent(f)), Math.round(f * 100));
+        hideCenterInfoLater(900);
+    }
+
+    /**
+     * In the background, let the media session handle the volume keys (so both keys together can
+     * pause). The real media volume is still changed, one step per press.
+     */
+    private void useRemoteVolume(boolean on) {
+        if (session == null) return;
+        try {
+            if (on && prefs.volumeKeysPause()) {
+                int max = maxVolume();
+                if (max <= 0) return;
+                volumeProvider = new VolumeProvider(VolumeProvider.VOLUME_CONTROL_ABSOLUTE, max, (int) currentVolumeIndex()) {
+                    @Override
+                    public void onAdjustVolume(final int direction) {
+                        briefWakeLock();
+                        handler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                onSessionVolumeStep(direction);
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onSetVolumeTo(final int volume) {
+                        handler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                setVolumeIndex(volume);
+                                if (volumeProvider != null) volumeProvider.setCurrentVolume((int) currentVolumeIndex());
+                            }
+                        });
+                    }
+                };
+                session.setPlaybackToRemote(volumeProvider);
+            } else if (volumeProvider != null) {
+                volumeProvider = null;
+                session.setPlaybackToLocal(new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                        .build());
+            }
+        } catch (RuntimeException ignored) {
+            volumeProvider = null;
+        }
+    }
+
     // ================================================================ audio focus, headphones, media session
 
     private final AudioManager.OnAudioFocusChangeListener focusListener = new AudioManager.OnAudioFocusChangeListener() {
@@ -2384,11 +2691,13 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
         public void onAudioFocusChange(int change) {
             switch (change) {
                 case AudioManager.AUDIOFOCUS_LOSS:
+                    releaseChordHold();
                     hasAudioFocus = false;
                     pausedByFocusLoss = false;
                     if (isPlaying()) pausePlayback(false);
                     break;
                 case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
+                    releaseChordHold();
                     if (isPlaying()) {
                         pausePlayback(false);
                         pausedByFocusLoss = true;
@@ -2486,7 +2795,8 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
 
                 @Override
                 public void onPause() {
-                    pausePlayback(true);
+                    if (chordPaused) play();
+                    else pausePlayback(true);
                 }
 
                 @Override
@@ -2541,7 +2851,7 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
                     | PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_FAST_FORWARD | PlaybackState.ACTION_REWIND
                     | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS | PlaybackState.ACTION_STOP;
             int state = errorVisible ? PlaybackState.STATE_ERROR
-                    : isPlaying() ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED;
+                    : isPlaying() || chordPaused ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED;
             session.setPlaybackState(new PlaybackState.Builder()
                     .setActions(actions)
                     .setState(state, safePosition(), isPlaying() ? speed : 0f, SystemClock.elapsedRealtime())
@@ -2549,15 +2859,18 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
         } catch (RuntimeException ignored) {
             // optional
         }
+        if (backgroundMode) PlaybackService.update(this, notificationState());
     }
 
     private void updateSessionMetadata(PlayItem item) {
         if (session == null || item == null) return;
         try {
-            session.setMetadata(new MediaMetadata.Builder()
+            MediaMetadata.Builder mb = new MediaMetadata.Builder()
                     .putString(MediaMetadata.METADATA_KEY_TITLE, item.title)
-                    .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, item.title)
-                    .build());
+                    .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, item.title);
+            if (prepared && durationMs > 0) mb.putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs);
+            if (notificationArt != null) mb.putBitmap(MediaMetadata.METADATA_KEY_ART, notificationArt);
+            session.setMetadata(mb.build());
         } catch (RuntimeException ignored) {
             // optional
         }

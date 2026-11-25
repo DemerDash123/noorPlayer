@@ -11,4 +11,5 @@ javac -nowarn -encoding UTF-8 -source 8 -target 8 -Xlint:-options -d "$OUT" -cp 
 java -cp "$OUT:$CP" org.junit.runner.JUnitCore \
   com.ahmed.noorplayer.core.FormatTest \
   com.ahmed.noorplayer.core.SubtitleTest \
-  com.ahmed.noorplayer.core.LogicTest 2>&1 | grep -v '^Picked up'
+  com.ahmed.noorplayer.core.LogicTest \
+  com.ahmed.noorplayer.core.VolumeChordTest 2>&1 | grep -v '^Picked up'

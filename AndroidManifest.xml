@@ -14,6 +14,10 @@
         android:maxSdkVersion="28" />
     <!-- Play videos from links -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Keep playing in the background (notification with controls) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:name=".NoorApp"
@@ -79,5 +83,10 @@
         <receiver
             android:name=".PipActionReceiver"
             android:exported="false" />
+
+        <service
+            android:name=".PlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
     </application>
 </manifest>

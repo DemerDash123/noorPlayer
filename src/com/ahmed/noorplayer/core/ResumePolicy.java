@@ -5,7 +5,7 @@ public final class ResumePolicy {
     private ResumePolicy() {}
 
     /** Ignore saved positions closer than this to the start or the end. */
-    public static final long EDGE_MS = 5000;
+    public static final long EDGE_MS = 3000;
 
     public static long resumePosition(long savedMs, long durationMs, boolean finished) {
         if (finished || savedMs < EDGE_MS) return 0;

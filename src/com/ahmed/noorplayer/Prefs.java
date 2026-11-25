@@ -38,11 +38,17 @@ final class Prefs {
     boolean gestures() { return sp.getBoolean("gestures", true); }
     void setGestures(boolean v) { sp.edit().putBoolean("gestures", v).apply(); }
 
-    boolean autoPip() { return sp.getBoolean("auto_pip", true); }
+    boolean autoPip() { return sp.getBoolean("auto_pip", false); }
     void setAutoPip(boolean v) { sp.edit().putBoolean("auto_pip", v).apply(); }
 
     boolean autoRotate() { return sp.getBoolean("auto_rotate", true); }
     void setAutoRotate(boolean v) { sp.edit().putBoolean("auto_rotate", v).apply(); }
+
+    boolean backgroundPlay() { return sp.getBoolean("background_play", true); }
+    void setBackgroundPlay(boolean v) { sp.edit().putBoolean("background_play", v).apply(); }
+
+    boolean volumeKeysPause() { return sp.getBoolean("volume_keys_pause", true); }
+    void setVolumeKeysPause(boolean v) { sp.edit().putBoolean("volume_keys_pause", v).apply(); }
 
     boolean tipShown() { return sp.getBoolean("tip_shown", false); }
     void setTipShown() { sp.edit().putBoolean("tip_shown", true).apply(); }
@@ -84,7 +90,14 @@ final class Prefs {
     }
 
     private void persist() {
-        sp.edit().putString("history", HistoryCodec.encode(history)).apply();
+        persist(false);
+    }
+
+    /** sync = write to disk now (used when leaving the player, so a killed app still remembers). */
+    private void persist(boolean sync) {
+        SharedPreferences.Editor ed = sp.edit().putString("history", HistoryCodec.encode(history));
+        if (sync) ed.commit();
+        else ed.apply();
     }
 
     /** Copy of the history, newest first. */
@@ -108,7 +121,19 @@ final class Prefs {
         return e == null ? null : e.copy();
     }
 
+    /** Same video reached through a different link: matched by title and length. */
+    synchronized HistoryEntry findSimilarHistory(String title, long durationMs) {
+        ensureHistory();
+        HistoryEntry e = HistoryCodec.findSimilar(history, title, durationMs);
+        return e == null ? null : e.copy();
+    }
+
     synchronized void savePlayback(String uri, String title, long mediaId, long positionMs, long durationMs, boolean finished) {
+        savePlayback(uri, title, mediaId, positionMs, durationMs, finished, false);
+    }
+
+    synchronized void savePlayback(String uri, String title, long mediaId, long positionMs, long durationMs,
+                                   boolean finished, boolean sync) {
         if (uri == null || uri.isEmpty()) return;
         ensureHistory();
         HistoryEntry old = HistoryCodec.find(history, uri);
@@ -121,7 +146,7 @@ final class Prefs {
         e.mediaId = mediaId > 0 ? mediaId : (old != null ? old.mediaId : -1);
         e.lastPlayedMs = System.currentTimeMillis();
         HistoryCodec.upsert(history, e);
-        persist();
+        persist(sync);
     }
 
     synchronized void removeHistory(String uri) {

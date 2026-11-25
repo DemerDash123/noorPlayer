@@ -880,8 +880,10 @@ public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
 
     private void showSettings() {
         String[] labels = {getString(R.string.set_resume), getString(R.string.set_autoplay),
-                getString(R.string.set_gestures), getString(R.string.set_auto_pip), getString(R.string.set_auto_rotate)};
-        boolean[] checked = {prefs.resume(), prefs.autoplayNext(), prefs.gestures(), prefs.autoPip(), prefs.autoRotate()};
+                getString(R.string.set_gestures), getString(R.string.set_auto_pip), getString(R.string.set_auto_rotate),
+                getString(R.string.set_background), getString(R.string.set_volume_keys)};
+        boolean[] checked = {prefs.resume(), prefs.autoplayNext(), prefs.gestures(), prefs.autoPip(), prefs.autoRotate(),
+                prefs.backgroundPlay(), prefs.volumeKeysPause()};
         Ui.dialog(this).setTitle(R.string.settings_title)
                 .setMultiChoiceItems(labels, checked, new DialogInterface.OnMultiChoiceClickListener() {
                     @Override
@@ -892,6 +894,8 @@ public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
                             case 2: prefs.setGestures(isChecked); break;
                             case 3: prefs.setAutoPip(isChecked); break;
                             case 4: prefs.setAutoRotate(isChecked); break;
+                            case 5: prefs.setBackgroundPlay(isChecked); break;
+                            case 6: prefs.setVolumeKeysPause(isChecked); break;
                             default: break;
                         }
                     }
