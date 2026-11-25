@@ -1,0 +1,14 @@
+package com.ahmed.noorplayer.core;
+
+/** One subtitle line shown from startMs (inclusive) to endMs (exclusive). */
+public final class SubtitleCue {
+    public final long startMs;
+    public final long endMs;
+    public final String text;
+
+    public SubtitleCue(long startMs, long endMs, String text) {
+        this.startMs = startMs;
+        this.endMs = endMs;
+        this.text = text;
+    }
+}

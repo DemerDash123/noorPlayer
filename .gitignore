@@ -1,0 +1,15 @@
+# Build output
+build/
+
+# Signing key and its password: never commit these
+keystore/
+*.jks
+*.keystore
+password.txt
+
+# Python / editor clutter
+__pycache__/
+*.pyc
+.idea/
+.vscode/
+.DS_Store
