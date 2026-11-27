@@ -44,6 +44,7 @@ import android.provider.OpenableColumns;
 import android.provider.Settings;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.GestureDetector;
 import android.view.KeyEvent;
 import android.view.MenuItem;
@@ -63,6 +64,7 @@ import android.widget.ProgressBar;
 import android.widget.SeekBar;
 import android.widget.TextView;
 
+import com.ahmed.noorplayer.core.GestureGate;
 import com.ahmed.noorplayer.core.GestureMath;
 import com.ahmed.noorplayer.core.HistoryEntry;
 import com.ahmed.noorplayer.core.PlayItem;
@@ -199,6 +201,21 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
     private int gestureMode = G_NONE, touchSlop, edgeIgnorePx, lastVolumeIndex = -1;
     private long gestureStartPos, gestureSeekTarget;
     private float gestureStartBrightness, gestureStartVolume, lastFocusX, lastFocusY;
+
+    /** Sideways seeking only starts after the finger has been held still this long (avoids accidental seeks). */
+    private static final long SEEK_HOLD_MS = 1000;
+    private boolean seekArmed, suppressNextTap;
+    private ImageButton autoNextBtn;
+    private final Runnable armSeekRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (gestureMode != G_NONE || locked || inPip || player == null || !prepared || durationMs <= 0) return;
+            seekArmed = true;
+            suppressNextTap = true;
+            gestureLayer.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+            showCenterInfo(R.drawable.ic_touch_hold, getString(R.string.hold_seek_ready), -1);
+        }
+    };
 
     // ================================================================ lifecycle
 
@@ -567,6 +584,7 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
         lockBtn = (ImageButton) findViewById(R.id.lock_btn);
         unlockBtn = (ImageButton) findViewById(R.id.unlock_btn);
         pipBtn = (ImageButton) findViewById(R.id.pip_btn);
+        autoNextBtn = (ImageButton) findViewById(R.id.autonext_btn);
         rewindLabel = (TextView) findViewById(R.id.rewind_label);
         forwardLabel = (TextView) findViewById(R.id.forward_label);
         centerInfo = findViewById(R.id.center_info);
@@ -602,6 +620,7 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
         click(R.id.aspect_btn, new Runnable() { public void run() { cycleAspect(); } });
         click(R.id.pip_btn, new Runnable() { public void run() { enterPip(); } });
         click(R.id.shot_btn, new Runnable() { public void run() { takeScreenshot(); } });
+        click(R.id.autonext_btn, new Runnable() { public void run() { toggleAutoNext(); } });
         click(R.id.audio_btn, new Runnable() { public void run() { showAudioDialog(); } });
         click(R.id.subs_btn, new Runnable() { public void run() { showSubtitleDialog(); } });
         click(R.id.speed_btn, new Runnable() { public void run() { showSpeedDialog(); } });
@@ -1644,6 +1663,9 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
 
     private void showMoreMenu(View anchor) {
         PopupMenu menu = new PopupMenu(this, anchor);
+        MenuItem autoNext = menu.getMenu().add(0, 8, 0, R.string.player_autoplay);
+        autoNext.setCheckable(true);
+        autoNext.setChecked(prefs.autoplayNext());
         menu.getMenu().add(0, 1, 1, R.string.more_sleep);
         menu.getMenu().add(0, 2, 2, R.string.more_repeat);
         menu.getMenu().add(0, 3, 3, R.string.more_boost);
@@ -1651,6 +1673,7 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
         menu.getMenu().add(0, 5, 5, R.string.more_info);
         menu.getMenu().add(0, 6, 6, R.string.more_open_with);
         menu.getMenu().add(0, 7, 7, prefs.backgroundPlay() ? R.string.more_background_on : R.string.more_background_off);
+        if (prefs.volumeKeysPause()) menu.getMenu().add(0, 9, 9, R.string.more_volume_help);
         menu.setOnMenuItemClickListener(new PopupMenu.OnMenuItemClickListener() {
             @Override
             public boolean onMenuItemClick(MenuItem item) {
@@ -1661,6 +1684,12 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
                     case 4: takeScreenshot(); return true;
                     case 5: showVideoInfo(); return true;
                     case 6: openWithOtherApp(); return true;
+                    case 8:
+                        toggleAutoNext();
+                        return true;
+                    case 9:
+                        showVolumeHelp();
+                        return true;
                     case 7:
                         prefs.setBackgroundPlay(!prefs.backgroundPlay());
                         Ui.toast(PlayerActivity.this, prefs.backgroundPlay() ? R.string.more_background_on : R.string.more_background_off);
@@ -2049,10 +2078,27 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
         }
     }
 
+    private void toggleAutoNext() {
+        prefs.setAutoplayNext(!prefs.autoplayNext());
+        updateAutoNextButton();
+        boolean on = prefs.autoplayNext();
+        showCenterInfo(R.drawable.ic_playlist_play, getString(on ? R.string.autoplay_on : R.string.autoplay_off), -1);
+        hideCenterInfoLater(1200);
+    }
+
+    /** Lit (gold) when the next video plays automatically, dimmed when it doesn't. */
+    private void updateAutoNextButton() {
+        boolean on = prefs.autoplayNext();
+        autoNextBtn.setImageTintList(android.content.res.ColorStateList.valueOf(on ? getColor(R.color.accent) : 0x80FFFFFF));
+        autoNextBtn.setContentDescription(getString(on ? R.string.autoplay_on : R.string.autoplay_off));
+    }
+
     private void updatePrevNext() {
         boolean many = playlist != null && playlist.size() > 1;
         prevBtn.setVisibility(many ? View.VISIBLE : View.GONE);
         nextBtn.setVisibility(many ? View.VISIBLE : View.GONE);
+        autoNextBtn.setVisibility(many ? View.VISIBLE : View.GONE);
+        updateAutoNextButton();
         if (many) {
             boolean hasNext = playlist.hasNext(repeatMode);
             nextBtn.setEnabled(hasNext);
@@ -2095,8 +2141,51 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
         handler.postDelayed(hideResumeRunnable, 6000);
     }
 
+    private void showVolumeHelp() {
+        prefs.setVolumeHelpShown();
+        Ui.dialog(this).setTitle(R.string.vol_help_title)
+                .setMessage(R.string.vol_help_text)
+                .setPositiveButton(R.string.vol_help_open, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        if (isPlaying()) pausePlayback(true);
+                        launchingInternal = true;
+                        if (!Ui.safeStart(PlayerActivity.this, new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))) {
+                            launchingInternal = false;
+                        }
+                    }
+                })
+                .setNegativeButton(R.string.not_now, null)
+                .setOnDismissListener(restoreUiOnDismiss)
+                .show();
+    }
+
+    /** True if Android's "hold both volume keys" accessibility shortcut is set (it swallows the key chord). */
+    private boolean volumeShortcutLikelyOn() {
+        try {
+            String v = Settings.Secure.getString(getContentResolver(), "accessibility_shortcut_target_service");
+            return v != null && !v.trim().isEmpty();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private void maybeShowVolumeHelp() {
+        if (!prefs.volumeKeysPause() || prefs.volumeHelpShown() || !prefs.tipShown()) return;
+        if (!volumeShortcutLikelyOn()) return;
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!isFinishing() && !stopped && !inPip) showVolumeHelp();
+            }
+        }, 1500);
+    }
+
     private void maybeShowTip() {
-        if (prefs.tipShown()) return;
+        if (prefs.tipShown()) {
+            maybeShowVolumeHelp();
+            return;
+        }
         prefs.setTipShown();
         tipView.setVisibility(View.VISIBLE);
         handler.postDelayed(new Runnable() {
@@ -2304,7 +2393,15 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
             return true;
         }
         if (errorVisible) return true;
-        if (action == MotionEvent.ACTION_DOWN) gestureMode = G_NONE;
+        if (action == MotionEvent.ACTION_DOWN) {
+            gestureMode = G_NONE;
+            seekArmed = false;
+            suppressNextTap = false;
+            handler.removeCallbacks(armSeekRunnable);
+            if (prefs.gestures()) handler.postDelayed(armSeekRunnable, SEEK_HOLD_MS);
+        } else if (action == MotionEvent.ACTION_POINTER_DOWN) {
+            handler.removeCallbacks(armSeekRunnable);
+        }
         scaleDetector.onTouchEvent(e);
         gestureDetector.onTouchEvent(e);
         if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) finishGesture();
@@ -2312,6 +2409,11 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
     }
 
     private void onSingleTap() {
+        if (suppressNextTap) {
+            // the finger was held to start seeking and then lifted without sliding
+            suppressNextTap = false;
+            return;
+        }
         if (tipView.getVisibility() == View.VISIBLE) {
             tipView.setVisibility(View.GONE);
             return;
@@ -2339,26 +2441,27 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
         if (w <= 0 || h <= 0) return false;
         if (gestureMode == G_NONE) {
             if (Math.abs(dx) < touchSlop && Math.abs(dy) < touchSlop) return false;
-            if (!prefs.gestures() || e1.getY() < edgeIgnorePx || e1.getY() > h - edgeIgnorePx) {
-                gestureMode = G_IGNORE;
-                return false;
-            }
-            if (Math.abs(dx) > Math.abs(dy)) {
-                if (player == null || !prepared || durationMs <= 0) {
-                    gestureMode = G_IGNORE;
-                    return false;
-                }
+            // the finger moved: it was not a still hold, so it can no longer arm seeking
+            handler.removeCallbacks(armSeekRunnable);
+            int decision = GestureGate.decide(seekArmed, dx, dy, e1.getX(), e1.getY(), w, h, edgeIgnorePx,
+                    prefs.gestures(), player != null && prepared && durationMs > 0);
+            if (decision == GestureGate.SEEK) {
                 gestureMode = G_SEEK;
                 gestureStartPos = safePosition();
                 gestureSeekTarget = gestureStartPos;
                 handler.removeCallbacks(hideControlsRunnable);
-            } else if (e1.getX() < w / 2f) {
+            } else if (decision == GestureGate.BRIGHTNESS) {
                 gestureMode = G_BRIGHTNESS;
                 gestureStartBrightness = currentBrightness();
-            } else {
+            } else if (decision == GestureGate.VOLUME) {
                 gestureMode = G_VOLUME;
                 gestureStartVolume = currentVolumeIndex();
                 lastVolumeIndex = -1;
+            } else {
+                // includes a quick sideways swipe without holding first, so the video doesn't jump by mistake
+                gestureMode = G_IGNORE;
+                if (seekArmed) hideCenterInfoLater(300);
+                return false;
             }
         }
         switch (gestureMode) {
@@ -2399,6 +2502,9 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
     }
 
     private void finishGesture() {
+        handler.removeCallbacks(armSeekRunnable);
+        if (seekArmed && gestureMode == G_NONE) hideCenterInfoLater(300);
+        seekArmed = false;
         if (gestureMode == G_SEEK) {
             lastScrubSeek = -1;
             seekToInternal(gestureSeekTarget, true);
@@ -2410,6 +2516,8 @@ public class PlayerActivity extends Activity implements TextureView.SurfaceTextu
 
     private boolean onZoomBegin(ScaleGestureDetector d) {
         if (inPip || locked || errorVisible) return false;
+        handler.removeCallbacks(armSeekRunnable);
+        seekArmed = false;
         if (gestureMode == G_SEEK) {
             lastScrubSeek = -1;
             seekToInternal(gestureSeekTarget, true);

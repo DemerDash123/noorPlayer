@@ -1,6 +1,8 @@
 package com.ahmed.noorplayer;
 
 import android.content.Context;
+import android.content.res.ColorStateList;
+import android.graphics.drawable.Drawable;
 import android.text.format.DateUtils;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -20,8 +22,10 @@ import com.ahmed.noorplayer.core.VideoItem;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Rows of the library list: videos, folders and recently watched entries. */
 final class LibraryAdapter extends BaseAdapter {
@@ -57,6 +61,8 @@ final class LibraryAdapter extends BaseAdapter {
     private final Callbacks callbacks;
     private List<Row> rows = new ArrayList<>();
     private Map<String, HistoryEntry> history = Collections.emptyMap();
+    private boolean selectionMode;
+    private Set<Long> selected = new HashSet<>();
 
     LibraryAdapter(Context context, ThumbnailLoader thumbs, Callbacks callbacks) {
         this.context = context;
@@ -73,6 +79,13 @@ final class LibraryAdapter extends BaseAdapter {
 
     List<Row> rows() {
         return rows;
+    }
+
+    /** Multi-select for deleting: rows show a check circle and selected ones are highlighted. */
+    void setSelection(boolean mode, Set<Long> selectedIds) {
+        selectionMode = mode;
+        selected = selectedIds != null ? selectedIds : new HashSet<Long>();
+        notifyDataSetChanged();
     }
 
     @Override
@@ -101,6 +114,9 @@ final class LibraryAdapter extends BaseAdapter {
     }
 
     private static final class Holder {
+        View root;
+        Drawable rootBackground;
+        ImageView check;
         ImageView thumb;
         TextView title;
         TextView meta;
@@ -118,6 +134,8 @@ final class LibraryAdapter extends BaseAdapter {
         if (v == null) {
             v = inflater.inflate(folder ? R.layout.item_folder : R.layout.item_video, parent, false);
             h = new Holder();
+            h.root = v;
+            h.rootBackground = v.getBackground();
             h.thumb = (ImageView) v.findViewById(R.id.thumb);
             h.title = (TextView) v.findViewById(R.id.item_title);
             h.meta = (TextView) v.findViewById(R.id.item_meta);
@@ -127,6 +145,7 @@ final class LibraryAdapter extends BaseAdapter {
                 h.badge = (TextView) v.findViewById(R.id.duration_badge);
                 h.watched = (ProgressBar) v.findViewById(R.id.watched_bar);
                 h.more = (ImageButton) v.findViewById(R.id.item_more);
+                h.check = (ImageView) v.findViewById(R.id.select_check);
                 h.more.setOnClickListener(new View.OnClickListener() {
                     @Override
                     public void onClick(View b) {
@@ -153,7 +172,19 @@ final class LibraryAdapter extends BaseAdapter {
         HistoryEntry e = history.get(v.uri);
         setWatched(h, e != null ? ResumePolicy.watchedFraction(e.positionMs, e.durationMs > 0 ? e.durationMs : v.durationMs, e.finished) : 0f);
         h.more.setTag(row);
+        showSelection(h, selectionMode, selectionMode && selected.contains(v.id));
         thumbs.load(h.thumb, ThumbnailLoader.keyForMedia(v.id), v.id, v.uri);
+    }
+
+    private void showSelection(Holder h, boolean mode, boolean isSelected) {
+        h.check.setVisibility(mode ? View.VISIBLE : View.GONE);
+        h.more.setVisibility(mode ? View.INVISIBLE : View.VISIBLE);
+        if (mode) {
+            h.check.setImageResource(isSelected ? R.drawable.ic_check_circle : R.drawable.ic_circle_outline);
+            h.check.setImageTintList(ColorStateList.valueOf(isSelected ? context.getColor(R.color.accent) : 0xFFFFFFFF));
+        }
+        if (isSelected) h.root.setBackgroundColor(0x33FFB300);
+        else h.root.setBackground(h.rootBackground);
     }
 
     private void bindHistory(Holder h, Row row) {
@@ -168,6 +199,7 @@ final class LibraryAdapter extends BaseAdapter {
         setBadge(h, e.durationMs);
         setWatched(h, ResumePolicy.watchedFraction(e.positionMs, e.durationMs, e.finished));
         h.more.setTag(row);
+        showSelection(h, false, false);
         if (e.mediaId > 0) {
             thumbs.load(h.thumb, ThumbnailLoader.keyForMedia(e.mediaId), e.mediaId, e.uri);
         } else if (e.uri.startsWith("content://") || e.uri.startsWith("file://")) {

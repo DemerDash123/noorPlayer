@@ -350,6 +350,12 @@
                     android:layout_weight="1" />
 
                 <ImageButton
+                    android:id="@+id/autonext_btn"
+                    style="@style/PlayerButton"
+                    android:contentDescription="@string/player_autoplay"
+                    android:src="@drawable/ic_playlist_play" />
+
+                <ImageButton
                     android:id="@+id/shot_btn"
                     style="@style/PlayerButton"
                     android:contentDescription="@string/more_screenshot"

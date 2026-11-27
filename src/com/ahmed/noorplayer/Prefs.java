@@ -32,7 +32,7 @@ final class Prefs {
     boolean resume() { return sp.getBoolean("resume", true); }
     void setResume(boolean v) { sp.edit().putBoolean("resume", v).apply(); }
 
-    boolean autoplayNext() { return sp.getBoolean("autoplay_next", true); }
+    boolean autoplayNext() { return sp.getBoolean("autoplay_next", false); }
     void setAutoplayNext(boolean v) { sp.edit().putBoolean("autoplay_next", v).apply(); }
 
     boolean gestures() { return sp.getBoolean("gestures", true); }
@@ -49,6 +49,9 @@ final class Prefs {
 
     boolean volumeKeysPause() { return sp.getBoolean("volume_keys_pause", true); }
     void setVolumeKeysPause(boolean v) { sp.edit().putBoolean("volume_keys_pause", v).apply(); }
+
+    boolean volumeHelpShown() { return sp.getBoolean("volume_help_shown", false); }
+    void setVolumeHelpShown() { sp.edit().putBoolean("volume_help_shown", true).apply(); }
 
     boolean tipShown() { return sp.getBoolean("tip_shown", false); }
     void setTipShown() { sp.edit().putBoolean("tip_shown", true).apply(); }

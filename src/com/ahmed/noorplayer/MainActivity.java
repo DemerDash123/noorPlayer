@@ -9,6 +9,8 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.IntentSender;
+import android.app.PendingIntent;
 import android.content.pm.PackageManager;
 import android.database.ContentObserver;
 import android.database.Cursor;
@@ -31,6 +33,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.AdapterView;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.ListView;
 import android.widget.PopupMenu;
@@ -48,8 +51,11 @@ import com.ahmed.noorplayer.core.VideoSorter;
 
 import java.text.DateFormat;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -58,6 +64,9 @@ import java.util.concurrent.RejectedExecutionException;
 public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
     private static final int REQ_PERMISSION = 1;
     private static final int REQ_OPEN_FILE = 2;
+    private static final int REQ_DELETE = 3;
+    private static final int REQ_DELETE_ONE = 4;
+    private static final int REQ_WRITE_FOR_DELETE = 5;
 
     private static final int TAB_VIDEOS = 0;
     private static final int TAB_FOLDERS = 1;
@@ -89,6 +98,15 @@ public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
     private boolean loaded, loading, reloadPending, continueDismissed, observerRegistered;
     private HistoryEntry continueEntry;
     private ContentObserver observer;
+
+    // multi-select for deleting
+    private boolean selecting;
+    private final Set<Long> selectedIds = new HashSet<>();
+    private ImageButton headerBackButton;
+    private View headerSearch, headerOpen, headerMore, headerSelectAll, headerDelete;
+    private List<VideoItem> pendingDelete;
+    private final List<VideoItem> deletedOk = new ArrayList<>();
+    private int deleteIndex, deleteFailures;
 
     private final Runnable reloadRunnable = new Runnable() {
         @Override
@@ -160,6 +178,10 @@ public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
 
     @Override
     public void onBackPressed() {
+        if (selecting) {
+            exitSelection();
+            return;
+        }
         if (searchBar.getVisibility() == View.VISIBLE) {
             closeSearch();
             return;
@@ -177,6 +199,24 @@ public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
 
     private void bindViews() {
         headerBack = findViewById(R.id.header_back);
+        headerBackButton = (ImageButton) findViewById(R.id.header_back);
+        headerSearch = findViewById(R.id.header_search);
+        headerOpen = findViewById(R.id.header_open);
+        headerMore = findViewById(R.id.header_more);
+        headerSelectAll = findViewById(R.id.header_select_all);
+        headerDelete = findViewById(R.id.header_delete);
+        headerSelectAll.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                selectAllVisible();
+            }
+        });
+        headerDelete.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                deleteVideos(selectedVideos());
+            }
+        });
         headerLogo = findViewById(R.id.header_logo);
         headerTitle = (TextView) findViewById(R.id.header_title);
         headerSort = findViewById(R.id.header_sort);
@@ -280,6 +320,11 @@ public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
                 if (position < 0 || position >= adapter.getCount()) return false;
                 LibraryAdapter.Row row = adapter.getItem(position);
                 if (row.type == LibraryAdapter.TYPE_FOLDER) return false;
+                if (row.type == LibraryAdapter.TYPE_VIDEO) {
+                    if (!selecting) startSelection();
+                    toggleSelected(row.video);
+                    return true;
+                }
                 onRowMore(view, row);
                 return true;
             }
@@ -308,6 +353,7 @@ public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
                     list.setSelection(0);
                     return;
                 }
+                exitSelection();
                 tab = which;
                 openFolder = null;
                 pendingFolderId = null;
@@ -340,6 +386,11 @@ public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        if (requestCode == REQ_WRITE_FOR_DELETE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) startLegacyDelete();
+            else Ui.toast(this, R.string.delete_perm);
+            return;
+        }
         if (requestCode != REQ_PERMISSION) return;
         if (hasVideoPermission()) {
             ThumbnailLoader.get(this).forgetFailures();
@@ -438,10 +489,7 @@ public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
     private void render() {
         boolean perm = hasVideoPermission();
         boolean inFolder = tab == TAB_FOLDERS && openFolder != null;
-        headerBack.setVisibility(inFolder ? View.VISIBLE : View.GONE);
-        headerLogo.setVisibility(inFolder ? View.GONE : View.VISIBLE);
-        headerTitle.setText(inFolder ? openFolder.name : getString(R.string.app_name));
-        headerSort.setVisibility(tab == TAB_RECENT ? View.GONE : View.VISIBLE);
+        updateHeader();
         for (int i = 0; i < 3; i++) {
             boolean sel = i == tab;
             tabTexts[i].setTextColor(getColor(sel ? R.color.text_primary : R.color.text_secondary));
@@ -470,6 +518,7 @@ public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
             }
         }
         adapter.setRows(rows, prefs.historyMap());
+        adapter.setSelection(selecting, selectedIds);
 
         loadingView.setVisibility(View.GONE);
         if (!rows.isEmpty()) {
@@ -522,7 +571,7 @@ public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
 
     private void updateContinueBar() {
         continueEntry = null;
-        if (!continueDismissed && tab != TAB_RECENT) {
+        if (!continueDismissed && tab != TAB_RECENT && !selecting) {
             List<HistoryEntry> h = prefs.history();
             for (int i = 0; i < Math.min(3, h.size()); i++) {
                 HistoryEntry e = h.get(i);
@@ -539,6 +588,190 @@ public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
             continueTitle.setText(t + "  ·  " + TimeFormat.format(continueEntry.positionMs));
             continueBar.setVisibility(View.VISIBLE);
         }
+    }
+
+    // ---------------------------------------------------------------- header & selection
+
+    private void updateHeader() {
+        boolean inFolder = tab == TAB_FOLDERS && openFolder != null;
+        if (selecting) {
+            headerBack.setVisibility(View.VISIBLE);
+            headerBackButton.setImageResource(R.drawable.ic_close);
+            headerBackButton.setContentDescription(getString(R.string.action_cancel_selection));
+            headerLogo.setVisibility(View.GONE);
+            headerTitle.setText(getString(R.string.selected_count, Ui.plural(this, R.plurals.video_count, selectedIds.size())));
+        } else {
+            headerBack.setVisibility(inFolder ? View.VISIBLE : View.GONE);
+            headerBackButton.setImageResource(R.drawable.ic_back);
+            headerBackButton.setContentDescription(getString(R.string.action_back));
+            headerLogo.setVisibility(inFolder ? View.GONE : View.VISIBLE);
+            headerTitle.setText(inFolder ? openFolder.name : getString(R.string.app_name));
+        }
+        headerSelectAll.setVisibility(selecting ? View.VISIBLE : View.GONE);
+        headerDelete.setVisibility(selecting ? View.VISIBLE : View.GONE);
+        headerSearch.setVisibility(selecting ? View.GONE : View.VISIBLE);
+        headerOpen.setVisibility(selecting ? View.GONE : View.VISIBLE);
+        headerMore.setVisibility(selecting ? View.GONE : View.VISIBLE);
+        headerSort.setVisibility(selecting || tab == TAB_RECENT ? View.GONE : View.VISIBLE);
+        for (int i = 0; i < 3; i++) {
+            boolean sel = i == tab;
+            tabTexts[i].setTextColor(getColor(sel ? R.color.text_primary : R.color.text_secondary));
+            tabLines[i].setVisibility(sel ? View.VISIBLE : View.INVISIBLE);
+        }
+    }
+
+    private void startSelection() {
+        selecting = true;
+        selectedIds.clear();
+        continueBar.setVisibility(View.GONE);
+    }
+
+    private void exitSelection() {
+        if (!selecting) return;
+        selecting = false;
+        selectedIds.clear();
+        updateHeader();
+        adapter.setSelection(false, selectedIds);
+        updateContinueBar();
+    }
+
+    private void toggleSelected(VideoItem v) {
+        if (!selectedIds.remove(v.id)) selectedIds.add(v.id);
+        if (selectedIds.isEmpty()) {
+            exitSelection();
+            return;
+        }
+        updateHeader();
+        adapter.setSelection(true, selectedIds);
+    }
+
+    private void selectAllVisible() {
+        for (LibraryAdapter.Row r : adapter.rows()) {
+            if (r.type == LibraryAdapter.TYPE_VIDEO) selectedIds.add(r.video.id);
+        }
+        updateHeader();
+        adapter.setSelection(true, selectedIds);
+    }
+
+    private List<VideoItem> selectedVideos() {
+        List<VideoItem> out = new ArrayList<>();
+        for (LibraryAdapter.Row r : adapter.rows()) {
+            if (r.type == LibraryAdapter.TYPE_VIDEO && selectedIds.contains(r.video.id)) out.add(r.video);
+        }
+        return out;
+    }
+
+    // ---------------------------------------------------------------- deleting
+
+    /** Android 11+: one system "Allow delete?" dialog. Older: our own confirmation first. */
+    private void deleteVideos(List<VideoItem> items) {
+        if (items == null || items.isEmpty()) return;
+        pendingDelete = new ArrayList<>(items);
+        if (Build.VERSION.SDK_INT >= 30) {
+            List<Uri> uris = new ArrayList<>();
+            for (VideoItem v : items) uris.add(Uri.parse(v.uri));
+            PendingIntent pi = Compat.createDeleteRequest(getContentResolver(), uris);
+            if (pi != null) {
+                try {
+                    startIntentSenderForResult(pi.getIntentSender(), REQ_DELETE, null, 0, 0, 0);
+                    return;
+                } catch (IntentSender.SendIntentException | RuntimeException e) {
+                    // reported below
+                }
+            }
+            pendingDelete = null;
+            Ui.toast(this, R.string.delete_failed);
+            return;
+        }
+        Ui.dialog(this)
+                .setMessage(getString(R.string.delete_confirm, Ui.plural(this, R.plurals.video_count, items.size())))
+                .setPositiveButton(R.string.action_delete, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        if (Build.VERSION.SDK_INT <= 28 && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                                != PackageManager.PERMISSION_GRANTED) {
+                            requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQ_WRITE_FOR_DELETE);
+                        } else {
+                            startLegacyDelete();
+                        }
+                    }
+                })
+                .setNegativeButton(R.string.cancel, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        pendingDelete = null;
+                    }
+                })
+                .show();
+    }
+
+    private void startLegacyDelete() {
+        if (pendingDelete == null) return;
+        deletedOk.clear();
+        deleteIndex = 0;
+        deleteFailures = 0;
+        deleteNextLegacy();
+    }
+
+    /** Android 7 to 10: delete one by one; Android 10 may ask the user to allow each video. */
+    private void deleteNextLegacy() {
+        if (pendingDelete == null) return;
+        while (deleteIndex < pendingDelete.size()) {
+            VideoItem v = pendingDelete.get(deleteIndex);
+            try {
+                int count = getContentResolver().delete(Uri.parse(v.uri), null, null);
+                if (count > 0) deletedOk.add(v);
+                else deleteFailures++;
+                deleteIndex++;
+            } catch (SecurityException e) {
+                PendingIntent pi = Compat.recoverableAction(e);
+                if (pi != null) {
+                    try {
+                        startIntentSenderForResult(pi.getIntentSender(), REQ_DELETE_ONE, null, 0, 0, 0);
+                        return; // continues in onActivityResult
+                    } catch (IntentSender.SendIntentException | RuntimeException ignored) {
+                        // count as failed below
+                    }
+                }
+                deleteFailures++;
+                deleteIndex++;
+            } catch (RuntimeException e) {
+                deleteFailures++;
+                deleteIndex++;
+            }
+        }
+        pendingDelete = null;
+        finishDelete(new ArrayList<>(deletedOk), deleteFailures);
+    }
+
+    private void finishDelete(List<VideoItem> deleted, int failures) {
+        Set<Long> gone = new HashSet<>();
+        for (VideoItem v : deleted) {
+            gone.add(v.id);
+            prefs.removeHistory(v.uri);
+        }
+        List<VideoItem> remaining = new ArrayList<>(allVideos.size());
+        for (VideoItem v : allVideos) {
+            if (!gone.contains(v.id)) remaining.add(v);
+        }
+        allVideos = remaining;
+        folders = VideoSorter.groupFolders(remaining, getString(R.string.unknown_folder));
+        if (openFolder != null) {
+            FolderInfo match = null;
+            for (FolderInfo f : folders) {
+                if (f.id.equals(openFolder.id)) match = f;
+            }
+            openFolder = match;
+        }
+        selecting = false;
+        selectedIds.clear();
+        render();
+        updateContinueBar();
+        if (!deleted.isEmpty()) {
+            Ui.toast(this, getString(R.string.deleted_count, Ui.plural(this, R.plurals.video_count, deleted.size())));
+        }
+        if (failures > 0) Ui.toast(this, R.string.delete_failed);
+        if (hasVideoPermission()) loadVideos();
     }
 
     // ---------------------------------------------------------------- search
@@ -570,6 +803,10 @@ public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
     private void onRowClick(int position) {
         if (position < 0 || position >= adapter.getCount()) return;
         LibraryAdapter.Row row = adapter.getItem(position);
+        if (selecting) {
+            if (row.type == LibraryAdapter.TYPE_VIDEO) toggleSelected(row.video);
+            return;
+        }
         if (row.type == LibraryAdapter.TYPE_FOLDER) {
             openFolder = row.folder;
             render();
@@ -592,6 +829,7 @@ public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
             menu.getMenu().add(0, 4, 4, R.string.item_share);
         }
         if (row.type == LibraryAdapter.TYPE_HISTORY) menu.getMenu().add(0, 5, 5, R.string.item_remove_recent);
+        if (row.type == LibraryAdapter.TYPE_VIDEO) menu.getMenu().add(0, 6, 6, R.string.item_delete);
         menu.setOnMenuItemClickListener(new PopupMenu.OnMenuItemClickListener() {
             @Override
             public boolean onMenuItemClick(MenuItem item) {
@@ -613,6 +851,9 @@ public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
                         prefs.removeHistory(row.history.uri);
                         render();
                         updateContinueBar();
+                        return true;
+                    case 6:
+                        if (video) deleteVideos(Collections.singletonList(row.video));
                         return true;
                     default:
                         return false;
@@ -730,6 +971,19 @@ public class MainActivity extends Activity implements LibraryAdapter.Callbacks {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_DELETE) {
+            // Android 11+: the system deleted the videos if the user tapped Allow
+            List<VideoItem> items = pendingDelete;
+            pendingDelete = null;
+            if (resultCode == RESULT_OK && items != null) finishDelete(items, 0);
+            return;
+        }
+        if (requestCode == REQ_DELETE_ONE) {
+            // Android 10: the user allowed (retry this video) or refused (skip it)
+            if (resultCode != RESULT_OK) deleteIndex++;
+            deleteNextLegacy();
+            return;
+        }
         if (requestCode != REQ_OPEN_FILE || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
         try {

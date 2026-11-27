@@ -44,6 +44,20 @@
             android:textStyle="bold" />
 
         <ImageButton
+            android:id="@+id/header_select_all"
+            style="@style/HeaderButton"
+            android:contentDescription="@string/action_select_all"
+            android:src="@drawable/ic_select_all"
+            android:visibility="gone" />
+
+        <ImageButton
+            android:id="@+id/header_delete"
+            style="@style/HeaderButton"
+            android:contentDescription="@string/action_delete"
+            android:src="@drawable/ic_delete"
+            android:visibility="gone" />
+
+        <ImageButton
             android:id="@+id/header_search"
             style="@style/HeaderButton"
             android:contentDescription="@string/action_search"

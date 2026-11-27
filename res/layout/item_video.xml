@@ -48,6 +48,19 @@
             android:textColor="#FFFFFFFF"
             android:textSize="11sp" />
 
+        <ImageView
+            android:id="@+id/select_check"
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:layout_gravity="top|start"
+            android:layout_margin="4dp"
+            android:background="@drawable/bg_circle"
+            android:importantForAccessibility="no"
+            android:padding="1dp"
+            android:src="@drawable/ic_circle_outline"
+            android:tint="#FFFFFFFF"
+            android:visibility="gone" />
+
         <ProgressBar
             android:id="@+id/watched_bar"
             style="@android:style/Widget.Material.ProgressBar.Horizontal"

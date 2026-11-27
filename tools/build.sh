@@ -7,8 +7,8 @@ B="$ROOT/build/apk"
 OUT="$ROOT/build/NoorPlayer.apk"
 FW=/usr/share/android-framework-res/framework-res.apk
 AJ=/usr/lib/android-sdk/platforms/android-23/android.jar
-VERSION_CODE=3
-VERSION_NAME=1.2
+VERSION_CODE=4
+VERSION_NAME=1.3
 KS="$ROOT/keystore/noor.jks"
 
 python3 - "$B" <<'EOF'

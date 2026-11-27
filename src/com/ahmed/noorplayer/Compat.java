@@ -10,6 +10,7 @@ import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Build;
 import android.os.CancellationSignal;
+import android.provider.MediaStore;
 import android.util.Rational;
 import android.util.Size;
 
@@ -17,6 +18,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -164,6 +166,40 @@ final class Compat {
             if (loadThumbnail == null) return null;
             Object r = loadThumbnail.invoke(cr, uri, new Size(w, h), null);
             return r instanceof Bitmap ? (Bitmap) r : null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    // ---------------------------------------------------------------- deleting videos
+
+    /**
+     * MediaStore.createDeleteRequest (API 30): a system dialog where the user approves deleting
+     * these videos; Android deletes them if approved. Null below Android 11 or on failure.
+     */
+    static PendingIntent createDeleteRequest(ContentResolver cr, Collection<Uri> uris) {
+        if (SDK < 30 || uris == null || uris.isEmpty()) return null;
+        try {
+            Object r = MediaStore.class.getMethod("createDeleteRequest", ContentResolver.class, Collection.class)
+                    .invoke(null, cr, uris);
+            return r instanceof PendingIntent ? (PendingIntent) r : null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * Android 10 refuses to delete another app's video with a RecoverableSecurityException that carries
+     * an "allow" dialog. Returns that dialog's PendingIntent, or null for any other error.
+     */
+    static PendingIntent recoverableAction(Throwable e) {
+        if (e == null || SDK < 26) return null;
+        try {
+            Class<?> rse = Class.forName("android.app.RecoverableSecurityException");
+            if (!rse.isInstance(e)) return null;
+            Object action = rse.getMethod("getUserAction").invoke(e);
+            Object pi = action.getClass().getMethod("getActionIntent").invoke(action);
+            return pi instanceof PendingIntent ? (PendingIntent) pi : null;
         } catch (Throwable t) {
             return null;
         }

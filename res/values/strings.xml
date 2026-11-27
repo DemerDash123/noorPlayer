@@ -78,7 +78,7 @@
     <string name="notif_paused">Paused</string>
     <string name="state_paused">Paused</string>
     <string name="state_playing">Playing</string>
-    <string name="about_text">Version %1$s\n\nTips:\n• Double-tap the left or right side to skip back or forward.\n• Double-tap the middle to pause or play.\n• Swipe up or down on the left side for brightness, on the right side for volume.\n• Swipe left or right to move through the video.\n• Pinch with two fingers to zoom.\n• Tap the lock button to block touches while watching.\n• Press Home while a video plays to keep watching in a small window.\n• Open videos from any app with “Open with” → Noor Player.\n• Press Volume Up and Volume Down together to pause or play.\n• Leave the app while a video plays and the sound keeps going; control it from the notification.</string>
+    <string name="about_text">Version %1$s\n\nTips:\n• Double-tap the left or right side to skip back or forward.\n• Double-tap the middle to pause or play.\n• Swipe up or down on the left side for brightness, on the right side for volume.\n• To move through the video, hold your finger still for a second, then slide left or right.\n• Pinch with two fingers to zoom.\n• Tap the lock button to block touches while watching.\n• Press Home while a video plays to keep watching in a small window.\n• Open videos from any app with “Open with” → Noor Player.\n• Press Volume Up and Volume Down together to pause or play.\n• Leave the app while a video plays and the sound keeps going; control it from the notification.</string>
     <string name="crash_title">The app closed unexpectedly</string>
     <string name="crash_text">Noor Player closed unexpectedly last time. You can copy the error details and send them to whoever built the app so it can be fixed.</string>
     <string name="crash_copy">Copy details</string>
@@ -175,7 +175,7 @@
     <string name="resume_from">Resumed at %1$s</string>
     <string name="resume_start_over">Start over</string>
     <string name="next_playing">Next: %1$s</string>
-    <string name="tip_gestures">Double-tap left or right to skip · Swipe on the left for brightness, on the right for volume · Swipe sideways to seek · Pinch to zoom\n\nTap to close</string>
+    <string name="tip_gestures">Double-tap left or right to skip · Swipe on the left for brightness, on the right for volume · Hold 1 second, then slide sideways to seek · Pinch to zoom\n\nTap to close</string>
     <string name="locked_hint">Screen locked. Tap the lock to unlock.</string>
     <string name="err_unsupported">This video format isn\'t supported by your phone.</string>
     <string name="err_io">Couldn\'t read the video. The file may be missing, or the network connection failed.</string>
@@ -188,4 +188,22 @@
     <string name="err_close">Close</string>
     <string name="nothing_to_play">Nothing to play.</string>
     <string name="live">LIVE</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_select_all">Select all</string>
+    <string name="action_cancel_selection">Cancel selection</string>
+    <string name="item_delete">Delete</string>
+    <string name="selected_count">%1$s selected</string>
+    <string name="delete_confirm">Delete %1$s? They will be removed from your phone.</string>
+    <string name="deleted_count">Deleted %1$s</string>
+    <string name="delete_failed">Couldn\'t delete some videos.</string>
+    <string name="delete_perm">Storage permission is needed to delete videos.</string>
+    <string name="autoplay_on">Next video plays automatically</string>
+    <string name="autoplay_off">Next video won\'t play automatically</string>
+    <string name="player_autoplay">Play next video automatically</string>
+    <string name="hold_seek_ready">Now slide left or right</string>
+    <string name="more_volume_help">Volume keys help</string>
+    <string name="vol_help_title">Pause with both volume keys</string>
+    <string name="vol_help_text">While your phone is unlocked, Android keeps Volume Up + Volume Down for its own accessibility shortcut, so apps never receive the two keys pressed together. That is why it works with the screen off but not while you watch.\n\nTo use it while watching, turn off that shortcut: in Accessibility settings, open Advanced settings and turn off \"Volume up and down keys\" (on some phones it is called the volume key shortcut).\n\nWithout changing anything: press one volume key and then the other a moment later while still holding the first.</string>
+    <string name="vol_help_open">Open Accessibility settings</string>
+    <string name="not_now">Not now</string>
 </resources>
